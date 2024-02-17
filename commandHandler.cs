@@ -1,9 +1,9 @@
+using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using FromBodyAttribute = Microsoft.Azure.Functions.Worker.Http.FromBodyAttribute;
+using NSec.Cryptography;
 
 namespace Bling.Function
 {
@@ -17,18 +17,43 @@ namespace Bling.Function
         }
 
         [Function("commandHandler")]
-        //public IActionResult Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", "post")] HttpRequest req, HttpRequestData reqData)
-        public IActionResult Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", "post")] HttpRequest req, [FromBody] BodyOfRequest reqData)
+        public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", "post")] HttpRequest req)
         {
-            _logger.LogInformation("Command Handler HTTP trigger function processed a request.");
+            _logger.LogInformation("C# HTTP trigger function processed a request.");
+            bool isValid = false;
 
-            _logger.LogInformation("Request Data Type: " + reqData.Type);
-            _logger.LogInformation("Request Data Name: " + reqData.Name);
+            var body = await new StreamReader(req.Body).ReadToEndAsync();
+            byte[] signature = Convert.FromBase64String(req.Headers["X-Signature-Ed25519"]);
+            byte[] timestamp = Convert.FromBase64String(req.Headers["X-Signature-Timestamp"]);
+            byte[] key = Convert.FromBase64String(Environment.GetEnvironmentVariable("PUBLIC_KEY"));
 
-            return new OkObjectResult("Request Data: " + reqData.ToString());
-            //return new OkObjectResult("Welcome to Azure Functions!");
+            var algorithm = SignatureAlgorithm.Ed25519;
+            var publicKey = PublicKey.Import(algorithm, key, KeyBlobFormat.RawPublicKey);
+            var message = timestamp.Concat(Encoding.UTF8.GetBytes(body)).ToArray();
+
+            try
+            {
+                isValid = algorithm.Verify(publicKey, message, signature);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error verifying signature");
+            }
+            
+            if (!isValid)
+            {
+                _logger.LogError("Signature is invalid");
+                return new UnauthorizedResult();
+            }
+            else
+            {
+                _logger.LogInformation("Signature is valid");
+            }
+
+            
+
+            
+            return new OkObjectResult("Command Run End");
         }
     }
-
-    public record BodyOfRequest (int Type, string Name);
 }
